@@ -73,6 +73,10 @@
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
 #include <deal.II/lac/block_sparsity_pattern.h>
 
+// We need cmath for the value of pi:
+
+#include <cmath>
+
 // This include file is needed for C++ output:
 
 #include <fstream>
@@ -96,7 +100,8 @@
  * an update direction.
  */
 
-namespace InverseAcoustic {
+namespace InverseAcoustic
+{
 
 // We include the namespace dealii:
 
@@ -115,7 +120,8 @@ namespace InverseAcoustic {
  */
 
     template <int dim>
-    class HelmholtzSolver {
+    class HelmholtzSolver
+    {
     public:
         HelmholtzSolver(const unsigned int degree, const unsigned int n_frequencies, const unsigned int n_transducers, const int regularization_parameter);
         void run();
@@ -198,7 +204,7 @@ namespace InverseAcoustic {
 
         /**
          * This class sets assigns the pressure values on the boundary of the domain. PressureBoundaryValues
-         * inherits from the Function<2> class from the deal.ii library.
+         * inherits from the Function<dim> class from the deal.ii library.
          */
 
         template <int dim>
@@ -429,15 +435,25 @@ namespace InverseAcoustic {
             adjoint_variables[i] = FEValuesExtractors::Scalar(n_experiments + i);
         FEValuesExtractors::Scalar parameter_gamma(2 * n_experiments);
 
+        // We need to establish a vector which holds the value of the parameter omega at
+        // each experiment. Omega has the value -(2*pi*f^k)^2 at each experiment k.
+        // For now we are setting all of the frequencies to 150kHz, but this will need to change:
+
+        std::vector<double> omega(n_experiments);
+        for (unsigned int i =0; i < n_experiments; ++i)
+        {
+            omega[i] = -((2*M_PI*150000)*(2*M_PI*150000));
+        }
+
         // We'll store the old solution values and old solution gradients in the following
         // objects then get the old function gradients by calling the get_function_gradients
         // method from the FEValuesBase class:
 
-        // NOTE: FOR THE MOMENT WE ARE IGNORING THE PROPER DEFINITION OF M^i. ASSUME FOR THE
-        // MOMENT THAT IT IS THE IDENTITY OPERATOR.
-
         std::vector<Vector<double>> old_solution_values(n_q_points, Vector<double>(2*n_experiments+1));
         std::vector<std::vector<Tensor<1, dim>>> old_solution_gradients(n_q_points, std::vector<Tensor<1,dim>>(2*n_experiments+1));
+
+        // NOTE: FOR THE MOMENT WE ARE IGNORING THE PROPER DEFINITION OF M^i. ASSUME FOR THE
+        // MOMENT THAT IT IS THE IDENTITY OPERATOR.
 
         // Loop over all active cells:
 
@@ -464,6 +480,7 @@ namespace InverseAcoustic {
             for (unsigned int k = 0; k < n_experiments; ++k)
             {
 
+                const double omega_curr = omega[k];
                 // Loop over all quadrature points:
 
                 for (unsigned int q = 0; q < n_q_points; ++q)
@@ -503,25 +520,27 @@ namespace InverseAcoustic {
                             // Add the contributions from the bilinear form to our local matrix:
 
                             local_matrix(i, j) +=
-                                    (phi_i_s * phi_j_s + // This term will need to change when I add the operator M^i.
+                                    (phi_i_s * phi_j_s + //... This term will need to change when I add the operator M^i.
                                     grad_phi_i_s * grad_phi_j_s +
-                                    phi_i_s * old_parameter * phi_j_s +
+                                    phi_i_s * old_parameter * omega_curr * phi_j_s +
                                     grad_phi_i_a * grad_phi_j_a +
-                                    old_parameter * phi_i_a * phi_j_a +
+                                    old_parameter * omega_curr * phi_i_a * phi_j_a +  // same as two lines up
                                     old_state * phi_i_a * phi_j_a +
-                                    phi_i_g * old_state * phi_j_g)
+                                    phi_i_g * old_state * phi_j_g +
+                                    regularization_parameter * phi_i_g * phi_j_g)
                                     *fe_values.JxW(q);
                         }
 
                         // Add the contributions from the bilinear form to our local right hand side:
 
-                        local_rhs(i) += (grad_phi_i_s * old_state_gradient +
-                                phi_i_s * old_parameter * old_state -
+                        local_rhs(i) += (grad_phi_i_s * old_state_gradient + // this corresponds to M=I
+                                phi_i_s * old_parameter * omega_curr * old_state +
                                 phi_i_s * rhs_values[q] +
                                 grad_phi_i_a * old_adjoint_gradient +
-                                old_parameter * phi_i_a * old_adjoint +
-                                phi_i_a * old_state + // This term will need to change when I add the M^i and z^i terms.
-                                phi_i_g * old_state * old_adjoint)
+                                old_parameter * omega_curr * phi_i_a * old_adjoint +
+                                phi_i_a * (old_state-1) + // This term will need to change when I add the M^i and z^i terms.
+                                phi_i_g * old_state * old_adjoint +
+                                regularization_parameter * phi_i_g * old_parameter)
                                 * fe_values.JxW(q);
                     }
                 }
